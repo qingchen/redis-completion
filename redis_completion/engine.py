@@ -129,17 +129,19 @@ class RedisEngine(object):
         title = self.client.hget(self.title_key, obj_id) or ''
         keys = []
 
+        pipe = self.client.pipeline()
         for word in self.clean_phrase(title):
             for partial_key in self.autocomplete_keys(word):
                 key = self.search_key(partial_key)
                 if not self.client.zrange(key, 1, 2):
-                    self.client.delete(key)
+                    pipe.delete(key)
                 else:
-                    self.client.zrem(key, obj_id)
+                    pipe.zrem(key, obj_id)
 
-        self.client.hdel(self.data_key, obj_id)
-        self.client.hdel(self.title_key, obj_id)
-        self.client.hdel(self.boost_key, obj_id)
+        pipe.hdel(self.data_key, obj_id)
+        pipe.hdel(self.title_key, obj_id)
+        pipe.hdel(self.boost_key, obj_id)
+        pipe.execute()
 
     def boost(self, obj_id, multiplier=1.1, negative=False):
         # take the existing boost for this item and increase it by the multiplier
@@ -162,8 +164,6 @@ class RedisEngine(object):
         return self.cache_key(phrase_key, boost_key)
 
     def _process_ids(self, id_list, limit, filters, mappers):
-        from pprint import pprint 
-        pprint(id_list)
         raw_datas = ifilter(None, self.client.hmget(self.data_key, id_list))
         mapped_datas = imap(lambda r:reduce(lambda x, f:f(x), mappers or [], r), raw_datas)
         filtered_datas = ifilter(lambda r:reduce(lambda x,f:f(x), filters or [], r) if r else False, mapped_datas)
@@ -187,8 +187,10 @@ class RedisEngine(object):
             new_key = self.get_cache_key(cleaned, boosts)
             if not self.client.exists(new_key):
                 # zinterstore also takes {k1: wt1, k2: wt2}
-                self.client.zinterstore(new_key, map(self.search_key, cleaned))
-                self.client.expire(new_key, self.cache_timeout)
+                pipe = self.client.pipeline()
+                pipe.zinterstore(new_key, map(self.search_key, cleaned))
+                pipe.expire(new_key, self.cache_timeout)
+                pipe.execute()
 
         if boosts:
             pipe = self.client.pipeline()
