@@ -75,3 +75,9 @@ schema
 ------
 
 .. image:: http://redis-completion.readthedocs.org/en/latest/_images/schema.jpg
+
+
+
+branch feature
+------
+Chinese support

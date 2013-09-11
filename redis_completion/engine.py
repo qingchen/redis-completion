@@ -3,6 +3,7 @@ try:
 except ImportError:
     import json
 import re
+from itertools import ifilter, imap, islice
 from redis import Redis
 
 from redis_completion.stop_words import STOP_WORDS as _STOP_WORDS
@@ -65,7 +66,7 @@ class RedisEngine(object):
         return score
 
     def clean_phrase(self, phrase):
-        phrase = re.sub('[^a-z0-9_\-\s]', '', phrase.lower())
+        phrase = re.sub(ur'[^a-z0-9_\-\s\r4e00-\u9fa5]', '', phrase.lower())
         return [w for w in phrase.split() if w not in self.stop_words]
 
     def create_key(self, phrase):
@@ -161,34 +162,12 @@ class RedisEngine(object):
         return self.cache_key(phrase_key, boost_key)
 
     def _process_ids(self, id_list, limit, filters, mappers):
-        ct = 0
-        data = []
-
-        for raw_id in id_list:
-            raw_data = self.client.hget(self.data_key, raw_id)
-            if not raw_data:
-                continue
-
-            if mappers:
-                for m in mappers:
-                    raw_data = m(raw_data)
-
-            if filters:
-                passes = True
-                for f in filters:
-                    if not f(raw_data):
-                        passes = False
-                        break
-
-                if not passes:
-                    continue
-
-            data.append(raw_data)
-            ct += 1
-            if limit and ct == limit:
-                break
-
-        return data
+        from pprint import pprint 
+        pprint(id_list)
+        raw_datas = ifilter(None, self.client.hmget(self.data_key, id_list))
+        mapped_datas = imap(lambda r:reduce(lambda x, f:f(x), mappers or [], r), raw_datas)
+        filtered_datas = ifilter(lambda r:reduce(lambda x,f:f(x), filters or [], r) if r else False, mapped_datas)
+        return list(islice(filtered_datas, limit))
 
     def search(self, phrase, limit=None, filters=None, mappers=None, boosts=None, autoboost=False):
         cleaned = self.clean_phrase(phrase)
@@ -223,7 +202,7 @@ class RedisEngine(object):
             pipe.execute()
 
         id_list = self.client.zrange(new_key, 0, -1)
-        return self._process_ids(id_list, limit, filters, mappers)
+        return self._process_ids(id_list, limit, filters, mappers) if id_list else []
 
     def search_json(self, phrase, limit=None, filters=None, mappers=None, boosts=None, autoboost=False):
         if not mappers:
